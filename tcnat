@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 from subprocess import Popen, PIPE
 import sys
+import binascii
+import socket
 try:
     from tabulate import tabulate
 except ImportError:
@@ -10,6 +12,11 @@ except ImportError:
 
 NAT_IFACE = "eth1"
 TC_PATH = "/sbin/tc"
+WHITELISTS_SRC = ["whiteip", "goodip", "goodnet"]
+
+
+def ip_to_hex(ip):
+    return '0x' + binascii.hexlify(socket.inet_aton(ip))
 
 
 def exec_command(com_args):
@@ -20,6 +27,22 @@ def exec_command(com_args):
         raise RuntimeError("Exec failed: {}\n{}".format(' '.join(com_args), stdout+stderr))
 
     return stdout
+
+
+def init_qdisc_ingress():
+    out = exec_command([TC_PATH, "qdisc", "show", "dev", NAT_IFACE])
+    if "qdisc ingress ffff:" in out:
+        return True
+    exec_command([TC_PATH, "qdisc", "add", "dev", NAT_IFACE, "ingress"])
+    return True
+
+
+def init_qdisc_egress():
+    out = exec_command([TC_PATH, "qdisc", "show", "dev", NAT_IFACE])
+    if "qdisc htb 1: root" in out:
+        return True
+    exec_command([TC_PATH, "qdisc", "add", "dev", NAT_IFACE, "root", "handle", "1:", "htb"])
+    return True
 
 
 def rawsnat_list():
@@ -33,7 +56,12 @@ def rawsnat_list():
             rule['nat_from'] = action[0].split('/')[0]
             rule['nat_to'] = action[1]
 
-            rule['pref'] = out[i-2].split('pref ')[1].split(' ')[0]
+            pref_line = ''
+            j = i
+            while 'pref' not in pref_line:
+                pref_line = out[j]
+                j -= 1
+            rule['pref'] = pref_line.split('pref ')[1].split(' ')[0]
             rules.append(rule)
         i += 1
     return rules
@@ -49,8 +77,12 @@ def rawdnat_list():
             action = line.split('ingress ')[1].split(' ')
             rule['nat_from'] = action[0].split('/')[0]
             rule['nat_to'] = action[1]
-
-            rule['pref'] = out[i-2].split('pref ')[1].split(' ')[0]
+            pref_line = ''
+            j = i
+            while 'pref' not in pref_line:
+                pref_line = out[j]
+                j -= 1
+            rule['pref'] = pref_line.split('pref ')[1].split(' ')[0]
             rules.append(rule)
         i += 1
     return rules
@@ -64,7 +96,54 @@ def del_dnat(pref):
     exec_command([TC_PATH, "filter", "del", "dev", NAT_IFACE, "prio", pref, "parent", "ffff:"])
 
 
+def add_dnat(from_ip, to_ip):
+    init_qdisc_ingress()
+    dstip_hex = ip_to_hex(from_ip)
+    cmd = [TC_PATH, "filter", "add", "dev", NAT_IFACE, "parent", "ffff:", "protocol", "ip", "basic", "match"]
+    cmp_dstip = "cmp(u32 at 16 layer network eq {0})".format(dstip_hex)
+    cmd.append(cmp_dstip)
+    for w in WHITELISTS_SRC:
+        cmd.append("and")
+        cmd.append("not")
+        cmd.append("ipset({0} src)".format(w))
+    cmd.append("action")
+    cmd.append("nat")
+    cmd.append("ingress")
+    cmd.append(from_ip)
+    cmd.append(to_ip)
+    exec_command(cmd)
+
+
+def add_snat(from_ip, to_ip):
+    init_qdisc_egress()
+    cmd = [TC_PATH, "filter", "add", "dev", NAT_IFACE, "parent", "1:",
+           "protocol", "ip", "u32", "match", "ip", "src", from_ip,
+           "action", "nat", "egress", from_ip, to_ip]
+    exec_command(cmd)
+
+
 if len(sys.argv) == 1:
+    sys.stderr.write("""Help:
+
+
+List all source nat entries:
+tcnat list_srcnat
+
+List all destination nat entries:
+tcnat list_dstnat
+
+Add destination nat rule:
+tcnat add_dstnat <destination IP to translate> <translated IP>
+
+Add source nat rule:
+tcnat add_srcnat <source IP to translate> <translated IP>
+
+Delete destination nat rule:
+tcnat del_dstnat <Pref value from the list>
+
+Delete source nat rule:
+tcnat del_srcnat <Pref value from the list>
+""")
     sys.exit(0)
 
 
@@ -77,7 +156,8 @@ if sys.argv[1] == 'list_srcnat':
             r['nat_from'],
             r['nat_to']
         ])
-    print(tabulate(table, headers=["Pref", "NAT FROM", "NAT TO"]))
+    if table:
+        print(tabulate(table, headers=["Pref", "NAT FROM", "NAT TO"]))
 
 if sys.argv[1] == 'list_dstnat':
     rules = rawdnat_list()
@@ -88,7 +168,8 @@ if sys.argv[1] == 'list_dstnat':
             r['nat_from'],
             r['nat_to']
         ])
-    print(tabulate(table, headers=["Pref", "NAT FROM", "NAT TO"]))
+    if table:
+        print(tabulate(table, headers=["Pref", "NAT FROM", "NAT TO"]))
 
 elif sys.argv[1] == 'del_srcnat':
     if len(sys.argv) < 3:
@@ -101,3 +182,15 @@ elif sys.argv[1] == 'del_dstnat':
         sys.stderr.write("Please specify dstnat rule pref\n")
         sys.exit(1)
     del_dnat(sys.argv[2])
+
+elif sys.argv[1] == 'add_dstnat':
+    if len(sys.argv) < 4:
+        sys.stderr.write("Usage: tcnat add_dstnat <dst ip to translate> <translated ip>\n")
+        sys.exit(1)
+    add_dnat(sys.argv[2], sys.argv[3])
+
+elif sys.argv[1] == 'add_srcnat':
+    if len(sys.argv) < 4:
+        sys.stderr.write("Usage: tcnat add_srcnat <src ip to translate> <translated ip>\n")
+        sys.exit(1)
+    add_snat(sys.argv[2], sys.argv[3])
