@@ -39,8 +39,30 @@ def rawsnat_list():
     return rules
 
 
+def rawdnat_list():
+    out = exec_command([TC_PATH, "filter", "show", "dev", NAT_IFACE, "parent", "ffff:"]).splitlines(False)
+    rules = []
+    i = 0
+    for line in out:
+        if 'action' in line:
+            rule = {}
+            action = line.split('ingress ')[1].split(' ')
+            rule['nat_from'] = action[0].split('/')[0]
+            rule['nat_to'] = action[1]
+
+            rule['pref'] = out[i-2].split('pref ')[1].split(' ')[0]
+            rules.append(rule)
+        i += 1
+    return rules
+
+
 def del_snat(pref):
-    exec_command([TC_PATH, "filter", "del", "dev", NAT_IFACE, "prio", pref])
+    exec_command([TC_PATH, "filter", "del", "dev", NAT_IFACE, "prio", pref, "parent", "1:"])
+
+
+def del_dnat(pref):
+    exec_command([TC_PATH, "filter", "del", "dev", NAT_IFACE, "prio", pref, "parent", "ffff:"])
+
 
 if len(sys.argv) == 1:
     sys.exit(0)
@@ -57,5 +79,25 @@ if sys.argv[1] == 'list_srcnat':
         ])
     print(tabulate(table, headers=["Pref", "NAT FROM", "NAT TO"]))
 
-if sys.argv[1] == 'del_snat':
-    del_snat(sys.argv[1])
+if sys.argv[1] == 'list_dstnat':
+    rules = rawdnat_list()
+    table = []
+    for r in rules:
+        table.append([
+            r['pref'],
+            r['nat_from'],
+            r['nat_to']
+        ])
+    print(tabulate(table, headers=["Pref", "NAT FROM", "NAT TO"]))
+
+elif sys.argv[1] == 'del_srcnat':
+    if len(sys.argv) < 3:
+        sys.stderr.write("Please specify srcnat rule pref\n")
+        sys.exit(1)
+    del_snat(sys.argv[2])
+
+elif sys.argv[1] == 'del_dstnat':
+    if len(sys.argv) < 3:
+        sys.stderr.write("Please specify dstnat rule pref\n")
+        sys.exit(1)
+    del_dnat(sys.argv[2])
