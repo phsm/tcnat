@@ -1,0 +1,61 @@
+#!/usr/bin/env python
+from subprocess import Popen, PIPE
+import sys
+try:
+    from tabulate import tabulate
+except ImportError:
+    sys.stderr.write("Please install python-tabulate package (apt-get install python-tabulate)")
+    sys.exit(1)
+
+
+NAT_IFACE = "eth1"
+TC_PATH = "/sbin/tc"
+
+
+def exec_command(com_args):
+    p = Popen(com_args, stdout=PIPE, stderr=PIPE)
+    stdout, stderr = p.communicate()
+
+    if p.returncode != 0:
+        raise RuntimeError("Exec failed: {}\n{}".format(' '.join(com_args), stdout+stderr))
+
+    return stdout
+
+
+def rawsnat_list():
+    out = exec_command([TC_PATH, "filter", "show", "dev", NAT_IFACE, "parent", "1:"]).splitlines(False)
+    rules = []
+    i = 0
+    for line in out:
+        if 'action' in line:
+            rule = {}
+            action = line.split('egress ')[1].split(' ')
+            rule['nat_from'] = action[0].split('/')[0]
+            rule['nat_to'] = action[1]
+
+            rule['pref'] = out[i-2].split('pref ')[1].split(' ')[0]
+            rules.append(rule)
+        i += 1
+    return rules
+
+
+def del_snat(pref):
+    exec_command([TC_PATH, "filter", "del", "dev", NAT_IFACE, "prio", pref])
+
+if len(sys.argv) == 1:
+    sys.exit(0)
+
+
+if sys.argv[1] == 'list_srcnat':
+    rules = rawsnat_list()
+    table = []
+    for r in rules:
+        table.append([
+            r['pref'],
+            r['nat_from'],
+            r['nat_to']
+        ])
+    print(tabulate(table, headers=["Pref", "NAT FROM", "NAT TO"]))
+
+if sys.argv[1] == 'del_snat':
+    del_snat(sys.argv[1])
