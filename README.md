@@ -23,14 +23,14 @@ Python-скрипт tcnat облегчает создание и удалени�
 Поле `NAT FROM` - Destination IP, который будет транслирован
 Поле `NAT TO` - Новый destination IP, который будет после трансляции
 
-### tcnat add_srcnat <src_ip> <translated_ip>
+### tcnat add_srcnat &lt;src_ip&gt; &lt;translated_ip&gt;
 Добавляет новое правило source NAT: адрес отправки пакета будет заменён с src_ip на translated_ip
 
-### tcnat add_dstnat <dst_ip> <translated_ip>
+### tcnat add_dstnat &lt;dst_ip&gt; &lt;translated_ip&gt;
 Добавляет новое правило destination NAT: адрес назначения пакета будет заменён с dst_ip на translated_ip
 
-### tcnat del_srcnat <pref>
-Удаляет правило source NAT с pref <pref>, это значение можно посмотреть командой `tcnat list_srcnat`
+### tcnat del_srcnat &lt;pref&gt;
+Удаляет правило source NAT с pref &lt;pref&gt;, это значение можно посмотреть командой `tcnat list_srcnat`
 
-### tcnat del_dstnat <pref>
-Удаляет правило destination NAT с pref <pref>, это значение можно посмотреть командой `tcnat list_dstnat`
+### tcnat del_dstnat &lt;pref&gt;
+Удаляет правило destination NAT с pref &lt;pref&gt;, это значение можно посмотреть командой `tcnat list_dstnat`
